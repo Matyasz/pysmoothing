@@ -1,18 +1,18 @@
 import numpy as np
+import scipy.ndimage
 
 
 def create_splines(domain: (int, int), quantity: int, resolution: int=100, order: int=3):
     """
+            Creates and returns a given number of splines as a numpy array.
+            Uses De Boor's algorithm to recursively create the splines.
+            Also offers an option to use two sets of splines to create 3-dimensional splines.
+
             :param domain:     The resolution desired for hte splines.
             :param quantity:   The number of splines.
             :param resolution: The length of the spline vectors to be returned.
             :param order:      The order of the splines. Default is cubic splines.
 
-    """
-    """
-    Creates and returns a given number of splines as a numpy array.
-    Uses De Boor's algorithm to recursively create the splines.
-    Also offers an option to use two sets of splines to create 3-dimensional splines.
     """
 
     # First validate the inputs and
@@ -22,7 +22,9 @@ def create_splines(domain: (int, int), quantity: int, resolution: int=100, order
         raise AttributeError(f"domain should be a tuple of length 2: Currently length is {len(domain)}")
     else:
         # Need enough knots for the algorithm to generate the correct number of k^th order splines
-        knots = np.asarray(np.linspace(start=domain[0], stop=domain[1], num=(quantity + order + 1)))
+        knots = np.asarray(np.linspace(start=domain[0],  # - (0.3 * abs(domain[0])),
+                                       stop=domain[1],  # + (0.301 * abs(domain[1])),
+                                       num=(quantity + order + 1)))
 
         domain = np.asarray(np.linspace(start=domain[0], stop=domain[1], num=resolution))
 
@@ -54,5 +56,31 @@ def create_splines(domain: (int, int), quantity: int, resolution: int=100, order
     splines = []
     for i in range(0, quantity):
         splines.append(recursive_de_boors(i, order))
+    splines = np.asarray(splines)
 
-    return np.asarray(splines)
+    """
+            Now we "clip" the splines:
+    
+            For the smoothing model to work well at the endpoints, we need to clip the splines so that the
+            ones at the ends are only partial splines. Otherwise, the endpoint measurements would always be 0.
+    """
+
+    # Get the indices to clip
+    left_clip = np.argmax(splines[0]) + abs(splines[0, np.argmax(splines[0]):np.argmax(splines[2])] -
+                                            splines[2, np.argmax(splines[0]):np.argmax(splines[2])]).argmin()
+    right_cip = np.argmax(splines[-3]) + abs(splines[-3, np.argmax(splines[-3]):np.argmax(splines[-1])] -
+                                             splines[-1, np.argmax(splines[-3]):np.argmax(splines[-1])]).argmin()
+
+    splines = splines[:, left_clip:right_cip + 1]
+
+    # Now we need to scale the width of the splines to match the user requested resolution
+    scaled_clipped_splines = []
+    for s in splines:
+        scaled_clipped_splines.append(scipy.ndimage.zoom(s, resolution/len(s), order=3))
+
+    del splines
+    return scaled_clipped_splines
+
+
+def tensor_product(spl_a, spl_b, include_const_layer=False):
+    pass
