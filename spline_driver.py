@@ -1,11 +1,8 @@
 import splines
 import matplotlib.pyplot as plt
 
-spline_count = 10
-spl = splines.create_splines((0, 100), spline_count, resolution=250)
-
-# for s in spl:
-#     print(s)
+spline_count = 7
+spl = splines.create_splines((0, 100), spline_count, resolution=500)
 
 fig = plt.figure()
 for i in range(spline_count):
