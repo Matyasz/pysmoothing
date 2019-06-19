@@ -2,31 +2,23 @@ import numpy as np
 import scipy.ndimage
 
 
-def create_splines(domain: (int, int), quantity: int, resolution: int=500, order: int=3):
+def create_splines(quantity: int, resolution: int=500, order: int=3):
     """
         Creates and returns a given number of splines as a numpy array.
         Uses De Boor's algorithm to recursively create the splines.
         Also offers an option to use two sets of splines to create 3-dimensional splines.
 
-        :param domain:     The resolution desired for hte splines.
         :param quantity:   The number of splines.
         :param resolution: The length of the spline vectors to be returned.
         :param order:      The order of the splines. Default is cubic splines.
 
     """
+    domain = np.asarray(np.linspace(start=0.0, stop=1.0, num=resolution))
 
-    # First validate the inputs and
-    if not isinstance(domain, tuple):
-        raise TypeError("domain should be a tuple of length 2: Currently not a tuple")
-    elif isinstance(domain, tuple) and 2 != len(domain):
-        raise AttributeError(f"domain should be a tuple of length 2: Currently length is {len(domain)}")
-    else:
-        # Need enough knots for the algorithm to generate the correct number of k^th order splines
-        knots = np.asarray(np.linspace(start=domain[0],
-                                       stop=domain[1],
-                                       num=(quantity + order + 1)))
-
-        domain = np.asarray(np.linspace(start=domain[0], stop=domain[1], num=resolution))
+    # Need enough knots for the algorithm to generate the correct number of k^th order splines
+    knots = np.asarray(np.linspace(start=domain[0],
+                                   stop=domain[-1],
+                                   num=(quantity + order + 1)))
 
     if not isinstance(quantity, int):
         raise TypeError("quantity must be an integer")
