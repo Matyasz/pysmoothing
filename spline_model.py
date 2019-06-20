@@ -1,10 +1,12 @@
+import model_helper_functions as mhf
 from splines import create_splines
 
 import tensorflow as tf
 
 
 class SplineModel:
-    def __init__(self, covariates, spline_count, x_vars: list, y_var: str=None, penalize: bool=True, seed: int=0):
+    def __init__(self, covariates, spline_count, x_vars, y_var: str=None,
+                 penalize: bool=True, resolution: int=500, seed: int=0):
         """
             Constructor only takes the basic info necessary to define the model,
             then methods will be available for the user to crete the model,
@@ -19,7 +21,14 @@ class SplineModel:
         tf.set_random_seed(seed)
         self.penalize = penalize
         self.validate_and_save_inputs(covariates, spline_count, x_vars, y_var)
-        self.indicators = {x: [] for x in x_vars + [y_var]}
+        self.indicators = {x: [] for x in getattr(self, "x_vars") + [y_var]}
+        self.resolution = resolution
+
+    def make(self):
+        self._make_placeholders()
+        self._make_coefficients()
+        self._make_model()
+        self._make_objective_functions()
 
     def fit(self, **kwargs):
         data = {}
@@ -38,17 +47,12 @@ class SplineModel:
         """
         phs = {}
 
-        # First get the total number of penalties needed.
-        penalty_count = getattr(self, "spline_count")[0]
-        if 2 == getattr(self, "dimension"):
-            penalty_count *= getattr(self, "spline_count")[1]
-
         # Make the placeholders for the penalty values
         for var in getattr(self, 'x_vars'):
             for cov in getattr(self, 'covariates'):
                 ph_name = f"{var}_{cov}_penalty"
                 phs[ph_name] = tf.placeholder(dtype=tf.float32,
-                                              shape=getattr(self, "data_shape"), name=ph_name)
+                                              shape=[1], name=ph_name)
 
         # Make the placeholders for the data to be fitted
         for var in getattr(self, 'x_vars') + [getattr(self, 'y_var')]:
@@ -63,7 +67,12 @@ class SplineModel:
 
         for var in getattr(self, "x_vars"):
             if 1 == getattr(self, "dimension"):
-                coeff[var] = tf.Variable(initial_value=tf.random_normal(getattr(self, "spline_counts") + 1,
+                coeff[var] = tf.Variable(initial_value=tf.random_normal([getattr(self, "spline_total") + 1],
+                                                                        mean=0.0, stddev=0.001),
+                                         dtype=tf.float32,
+                                         name=f"{var}_coefficients")
+            else:
+                coeff[var] = tf.Variable(initial_value=tf.random_normal([getattr(self, "spline_total") + 1],
                                                                         mean=0.0, stddev=0.001),
                                          dtype=tf.float32,
                                          name=f"{var}_coefficients")
@@ -76,31 +85,59 @@ class SplineModel:
         # Construct the splines for use in the model
         # If we have a two dimensional model, create the 2D splines and use them
         if 1 == getattr(self, "dimension"):
-            model_splines = create_splines(getattr(self, "spline_count") + 1)
+            model_splines = tf.transpose(tf.constant(create_splines(getattr(self, "spline_total"),
+                                                                    resolution=self.resolution),
+                                                     dtype=tf.float32))
+
+            sum_axis = 1
         else:
             from splines import tensor_product
-            s1 = create_splines(getattr(self, "spline_count")[2])
-            s2 = create_splines(getattr(self, "spline_count")[1])
+            s1 = create_splines(getattr(self, "spline_counts")[0])
+            s2 = create_splines(getattr(self, "spline_counts")[1])
 
             model_splines = tensor_product(s1, s2, include_const_layer=True)
 
+            sum_axis = 2
+
         # Construct the model for each variable
         for var in getattr(self, 'x_vars'):
-            pass
+            model = tf.reduce_sum(tf.multiply(model_splines, getattr(self, "coefficients").get(var)),
+                                  axis=sum_axis, name=f"{var}_model")
+            models[var] = model
 
-        # If there is  aY variable for the model, create that model
+        # If there is a Y variable for the model, create that model
         if isinstance(getattr(self, "y_var"), str):
-            pass
+            model = tf.constant(0., dtype=tf.float32)
+            for m in models.keys():
+                model = model + models[m]
 
+            models[getattr(self, "y_var")] = model
         setattr(self, "models", models)
 
-    def _make_penalty(self):
+    def _make_penalties(self):
         pass
 
-    def _make_objective_function(self):
-        pass
+    def _make_objective_functions(self):
+        objectives = {}
 
-    def _make_optimizer(self):
+        # Define the objective functions for all X variable models.
+        # Often, the splines will have far more input values than the actual data, so we need to make
+        # sure that we grab the correct number of evenly spaced spline outputs for this calculation.
+        for var in getattr(self, 'x_vars'):
+            obj = tf.reduce_sum(tf.square(tf.subtract(
+                tf.gather(getattr(self, 'models').get(var),
+                          indices=mhf.match_indices(larger=self.resolution,
+                                                    smaller=getattr(self, "data_shape")[0])),
+                getattr(self, 'placeholders').get(var))),
+                                name=f"{var}_objective")
+
+            objectives[var] = obj
+
+        # If there is a Y variable, define its objective function.
+
+        setattr(self, "objectives", objectives)
+
+    def _make_optimizers(self):
         pass
 
     def add_indicator(self, **kwargs):
@@ -139,9 +176,14 @@ class SplineModel:
                 if not isinstance(c, int):
                     raise TypeError(f"Counts must be integers, but count {i} was not.")
 
-            setattr(self, "spline_count", list(spline_count))
+            setattr(self, "spline_counts", list(spline_count))
+            setattr(self, "spline_total", spline_count[0] * spline_count[1])
         elif isinstance(spline_count, int) and 1 == len(covariates):
-            setattr(self, "spline_count", [spline_count])
+            setattr(self, "spline_counts", [spline_count])
+            setattr(self, "spline_total", spline_count)
+        elif isinstance(spline_count, int) and 2 == len(covariates):
+            setattr(self, "spline_counts", [spline_count, spline_count])
+            setattr(self, "spline_total", spline_count ** 2)
         else:
             raise AttributeError("Spline count must either be a single positive integer, "
                                  "or a tuple containing two positive integers.")
@@ -153,8 +195,10 @@ class SplineModel:
                     raise TypeError(f"X variables must be strings: {i} was not.")
 
             setattr(self, "x_vars", x_vars)
+        elif isinstance(x_vars, str):
+            setattr(self, "x_vars", [x_vars])
         else:
-            raise AttributeError("X variable names must be strings")
+            raise AttributeError("X variable names must be passed as a list of strings, or a single string")
 
         if isinstance(y_var, str) or y_var is None:
             setattr(self, "y_var", y_var)

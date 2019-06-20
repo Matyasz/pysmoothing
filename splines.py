@@ -2,7 +2,7 @@ import numpy as np
 import scipy.ndimage
 
 
-def create_splines(quantity: int, resolution: int=500, order: int=3):
+def create_splines(quantity: int, resolution: int=500, order: int=3, const_spline: bool=True):
     """
         Creates and returns a given number of splines as a numpy array.
         Uses De Boor's algorithm to recursively create the splines.
@@ -67,8 +67,12 @@ def create_splines(quantity: int, resolution: int=500, order: int=3):
     scaled_clipped_splines = []
     for s in splines:
         scaled_clipped_splines.append(scipy.ndimage.zoom(s, resolution/len(s), order=3))
-
     del splines
+
+    if const_spline:
+        const = np.array([1.0 for _ in range(len(scaled_clipped_splines[0]))])
+        scaled_clipped_splines = np.insert(scaled_clipped_splines, 0, const, axis=0)
+
     return scaled_clipped_splines
 
 
