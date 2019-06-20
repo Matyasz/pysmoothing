@@ -12,4 +12,4 @@ def match_indices(larger, smaller):
         :return: The indices from the larger tensor that you should use to compare the two tensors
     """
 
-    return [x for x in np.linspace(start=0, stop=larger, num=smaller, dtype=np.int32)]
+    return [x for x in np.linspace(start=0, stop=larger - 10e-4, num=smaller, dtype=np.int32)]

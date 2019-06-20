@@ -19,27 +19,49 @@ class SplineModel:
             :param seed:
         """
         tf.set_random_seed(seed)
-        self.penalize = penalize
         self.validate_and_save_inputs(covariates, spline_count, x_vars, y_var)
+
         self.indicators = {x: [] for x in getattr(self, "x_vars") + [y_var]}
+
+        self.penalize = penalize
         self.resolution = resolution
+        self.global_step = tf.Variable(0, trainable=False, name="global_step")
 
     def make(self):
         self._make_placeholders()
         self._make_coefficients()
         self._make_model()
         self._make_objective_functions()
+        self._make_optimizers()
 
-    def fit(self, **kwargs):
+    def fit_one(self, x_var: str, raw_data, **kwargs):
         data = {}
-        for var, value in kwargs:
-            data[var] = value
+        # for var, value in kwargs:
+        #     data[var] = value
+
+        data[getattr(self, "placeholders").get('exp')] = raw_data
+
+        predictions = {}
 
         with tf.Session() as sess:
-            sess.run(tf.initialize_all_variables)
+            sess.run(tf.global_variables_initializer())
+            for var in getattr(self, 'x_vars'):
+                for _ in range(1000):
+                    _, loss = sess.run([getattr(self, "optimizers").get(var),
+                                        getattr(self, "objectives").get(var)], feed_dict=data)
+                    print(loss)
+
+                predictions[var] = sess.run([tf.gather(getattr(self, "models").get(var),
+                                                       mhf.match_indices(larger=self.resolution,
+                                                                         smaller=getattr(self, "data_shape")[0]))])
+
+        setattr(self, "predictions", predictions)
 
     def predict(self, vars=None):
-        pass
+        data = {}
+        for var in vars:
+            data[var] = getattr(self, "predictions").get(var)
+        return data
 
     def _make_placeholders(self):
         """
@@ -134,11 +156,32 @@ class SplineModel:
             objectives[var] = obj
 
         # If there is a Y variable, define its objective function.
+        if isinstance(getattr(self, "y_var"), str):
+            with getattr(self, "y_var") as y_var:
+                obj = tf.reduce_sum(tf.square(tf.subtract(
+                    tf.gather(getattr(self, 'models').get(y_var),
+                              indices=mhf.match_indices(larger=self.resolution,
+                                                        smaller=getattr(self, "data_shape")[0])),
+                    getattr(self, 'placeholders').get(y_var))),
+                    name=f"{y_var}_objective")
+
+                objectives[y_var] = obj
 
         setattr(self, "objectives", objectives)
 
     def _make_optimizers(self):
-        pass
+
+        optimizers = {}
+        for var in getattr(self, 'x_vars'):
+            learning_rate = tf.train.exponential_decay(learning_rate=20., global_step=self.global_step,
+                                                       decay_steps=250, decay_rate=0.90, staircase=True,
+                                                       name=f"{var}_learning_rate")
+            optimizer = tf.train.AdadeltaOptimizer(learning_rate=learning_rate, name=f"{var}_optimizer")
+
+            opt = optimizer.minimize(getattr(self, "objectives").get(var), name=f"{var}_minimize")
+            optimizers[var] = opt
+
+        setattr(self, "optimizers", optimizers)
 
     def add_indicator(self, **kwargs):
         pass
