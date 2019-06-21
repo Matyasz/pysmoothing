@@ -8,9 +8,10 @@ def create_splines(quantity: int, resolution: int=500, order: int=3, const_splin
         Uses De Boor's algorithm to recursively create the splines.
         Also offers an option to use two sets of splines to create 3-dimensional splines.
 
-        :param quantity:   The number of splines.
-        :param resolution: The length of the spline vectors to be returned.
-        :param order:      The order of the splines. Default is cubic splines.
+        :param quantity:      The number of splines.
+        :param resolution:    The length of the spline vectors to be returned.
+        :param order:         The order of the splines. Default is cubic splines.
+        :param const_spline:  Whether or not to include a constant spline
 
     """
     domain = np.asarray(np.linspace(start=0.0, stop=1.0, num=resolution))
@@ -76,5 +77,10 @@ def create_splines(quantity: int, resolution: int=500, order: int=3, const_splin
     return scaled_clipped_splines
 
 
-def tensor_product(spl_a, spl_b, include_const_layer=False):
-    pass
+def tensor_product(splines_a, splines_b):
+    splines = [np.outer(splines_a[0], splines_b[0])]
+
+    for a in splines_a[1:]:
+        for b in splines_b[1:]:
+            splines.append(np.outer(a, b))
+    return np.asarray(splines)

@@ -1,11 +1,11 @@
 import splines
 import matplotlib.pyplot as plt
 
-spline_count = 7
-spl = splines.create_splines(spline_count, resolution=500)
+spline_count = 8
+A = splines.create_splines(spline_count)
+B = splines.create_splines(spline_count)
 
-fig = plt.figure()
-for s in spl:
-    plt.plot(s)
+C = splines.tensor_product(A, B)
 
+plt.imshow(C[36], cmap='hot', interpolation='nearest')
 plt.show()

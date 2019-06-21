@@ -31,36 +31,62 @@ class SplineModel:
         self._make_placeholders()
         self._make_coefficients()
         self._make_model()
+        self._make_penalties()
         self._make_objective_functions()
         self._make_optimizers()
 
-    def fit_one(self, x_var: str, raw_data, **kwargs):
-        data = {}
-        # for var, value in kwargs:
-        #     data[var] = value
+    def fit_one(self, x_var: str, raw_data, print_freq: int=100):
+        """
+            Used to fit one X variable and return the data.
 
-        data[getattr(self, "placeholders").get('exp')] = raw_data
-
-        predictions = {}
+            :param x_var:
+            :param raw_data:
+            :param print_freq:
+            :return:
+        """
+        data = {getattr(self, "placeholders").get(x_var): raw_data}
+        counter = 0
 
         with tf.Session() as sess:
             sess.run(tf.global_variables_initializer())
-            for var in getattr(self, 'x_vars'):
-                for _ in range(1000):
-                    _, loss = sess.run([getattr(self, "optimizers").get(var),
-                                        getattr(self, "objectives").get(var)], feed_dict=data)
-                    print(loss)
 
-                predictions[var] = sess.run([tf.gather(getattr(self, "models").get(var),
-                                                       mhf.match_indices(larger=self.resolution,
-                                                                         smaller=getattr(self, "data_shape")[0]))])
+            for _ in range(800):
+                _, loss = sess.run([getattr(self, "optimizers").get(x_var),
+                                    getattr(self, "objectives").get(x_var)], feed_dict=data)
 
-        setattr(self, "predictions", predictions)
+                counter += 1
+                if 0 == counter % print_freq:
+                    print(f"Iterations: {counter}   loss: {loss}")
+            print(f"Iterations: {counter}   loss: {loss}")
+
+            # When done training, get the prediction
+            prediction = sess.run([tf.gather(getattr(self, "models").get(x_var),
+                                             mhf.match_indices(larger=self.resolution,
+                                                               smaller=getattr(self, "data_shape")[0]))])
+
+        return prediction
+
+    def fit_multi(self):
+        """
+            Used to fit all variables, and save a dictionary to the object which stores the fitted values.
+        """
+        pass
+
+    def _fit(self):
+        """
+            Holds the logic for fitting a model to a variable.
+        """
+        pass
 
     def predict(self, vars=None):
         data = {}
-        for var in vars:
-            data[var] = getattr(self, "predictions").get(var)
+        if vars is not None:
+            for var in vars:
+                data[var] = getattr(self, "predictions").get(var)
+        else:
+            for var in getattr(self, "x_vars") + [getattr(self, "y_var")]:
+                data[var] = getattr(self, "predictions").get(var)
+
         return data
 
     def _make_placeholders(self):
@@ -117,7 +143,7 @@ class SplineModel:
             s1 = create_splines(getattr(self, "spline_counts")[0])
             s2 = create_splines(getattr(self, "spline_counts")[1])
 
-            model_splines = tensor_product(s1, s2, include_const_layer=True)
+            model_splines = tensor_product(s1, s2)
 
             sum_axis = 2
 
@@ -137,7 +163,18 @@ class SplineModel:
         setattr(self, "models", models)
 
     def _make_penalties(self):
-        pass
+        penalties = {}
+
+        if self.penalize:
+            for var in getattr(self, 'x_vars'):
+                if 1 == getattr(self, "dimension"):
+                    penalties[var] = mhf.quadratic_finite_difference(
+                                getattr(self, "coefficients").get(var)[1:])
+        else:
+            for var in getattr(self, 'x_vars'):
+                setattr(self, f"{var}_penalty", tf.constant(0., dtype=tf.float32))
+
+        setattr(self, "penalties", penalties)
 
     def _make_objective_functions(self):
         objectives = {}
@@ -153,7 +190,7 @@ class SplineModel:
                 getattr(self, 'placeholders').get(var))),
                                 name=f"{var}_objective")
 
-            objectives[var] = obj
+            objectives[var] = obj + getattr(self, "penalties").get(var)
 
         # If there is a Y variable, define its objective function.
         if isinstance(getattr(self, "y_var"), str):

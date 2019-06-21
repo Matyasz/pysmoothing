@@ -1,4 +1,5 @@
 import numpy as np
+import tensorflow as tf
 
 
 def match_indices(larger, smaller):
@@ -12,4 +13,12 @@ def match_indices(larger, smaller):
         :return: The indices from the larger tensor that you should use to compare the two tensors
     """
 
-    return [x for x in np.linspace(start=0, stop=larger - 10e-4, num=smaller, dtype=np.int32)]
+    return [x for x in np.linspace(start=0, stop=larger - 1, num=smaller, dtype=np.int32)]
+
+
+def normalize(v):
+    return (v - np.nanmean(v)) / np.nanstd(v)
+
+
+def quadratic_finite_difference(v):
+    return tf.reduce_sum([(v[i] - (2 * v[i - 1]) + v[i - 2]) ** 2 for i in range(2, v.shape.as_list()[0])])
