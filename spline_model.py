@@ -1,6 +1,7 @@
 import model_helper_functions as mhf
 from splines import create_splines
 
+from numpy.linalg import norm
 import tensorflow as tf
 
 
@@ -19,6 +20,7 @@ class SplineModel:
             :param seed:
         """
         tf.set_random_seed(seed)
+
         self.validate_and_save_inputs(covariates, spline_count, x_vars, y_var)
 
         self.indicators = {x: [] for x in getattr(self, "x_vars") + [y_var]}
@@ -45,19 +47,28 @@ class SplineModel:
             :return:
         """
         data = {getattr(self, "placeholders").get(x_var): raw_data}
+        gradients = getattr(self, "optimizers").get(x_var).compute_gradients(getattr(self, "objectives").get(x_var),
+                                                                             getattr(self, "coefficients").get(x_var))
+        minimizer = getattr(self, "optimizers").get(x_var).apply_gradients(gradients, global_step=self.global_step)
         counter = 0
+        grad = 1
 
         with tf.Session() as sess:
             sess.run(tf.global_variables_initializer())
 
-            for _ in range(800):
-                _, loss = sess.run([getattr(self, "optimizers").get(x_var),
-                                    getattr(self, "objectives").get(x_var)], feed_dict=data)
+            while grad > 0.01:
+
+                # _, loss = sess.run([minimizer, getattr(self, "objectives").get(x_var)], feed_dict=data)
+                _, grad, loss = sess.run([minimizer, gradients[0][0], getattr(self, "objectives").get(x_var)],
+                                         feed_dict=data)
+                grad = norm(grad)
+
+                # TODO: figure out how to make this thing give us the gradients that it's already computing!!!
 
                 counter += 1
                 if 0 == counter % print_freq:
-                    print(f"Iterations: {counter}   loss: {loss}")
-            print(f"Iterations: {counter}   loss: {loss}")
+                    print(f"Iterations: {counter}   loss: {loss}   grad: {grad}")
+            print(f"Iterations: {counter}   loss: {loss}   grad: {grad}")
 
             # When done training, get the prediction
             prediction = sess.run([tf.gather(getattr(self, "models").get(x_var),
@@ -207,16 +218,13 @@ class SplineModel:
         setattr(self, "objectives", objectives)
 
     def _make_optimizers(self):
-
         optimizers = {}
         for var in getattr(self, 'x_vars'):
             learning_rate = tf.train.exponential_decay(learning_rate=20., global_step=self.global_step,
                                                        decay_steps=250, decay_rate=0.90, staircase=True,
                                                        name=f"{var}_learning_rate")
             optimizer = tf.train.AdadeltaOptimizer(learning_rate=learning_rate, name=f"{var}_optimizer")
-
-            opt = optimizer.minimize(getattr(self, "objectives").get(var), name=f"{var}_minimize")
-            optimizers[var] = opt
+            optimizers[var] = optimizer
 
         setattr(self, "optimizers", optimizers)
 
