@@ -21,7 +21,7 @@ class SplineModel:
         """
         tf.set_random_seed(seed)
 
-        self.validate_and_save_inputs(covariates, spline_count, x_vars, y_var)
+        mhf.validate_and_save_inputs(self, covariates, spline_count, x_vars, y_var)
 
         self.indicators = {x: [] for x in getattr(self, "x_vars") + [y_var]}
 
@@ -37,7 +37,7 @@ class SplineModel:
         self._make_objective_functions()
         self._make_optimizers()
 
-    def fit_one(self, x_var: str, raw_data, print_freq: int=100):
+    def fit_one(self, x_var: str, raw_data, print_freq: int=500):
         """
             Used to fit one X variable and return the data.
 
@@ -51,23 +51,24 @@ class SplineModel:
                                                                              getattr(self, "coefficients").get(x_var))
         minimizer = getattr(self, "optimizers").get(x_var).apply_gradients(gradients, global_step=self.global_step)
         counter = 0
-        grad = 1
 
         with tf.Session() as sess:
             sess.run(tf.global_variables_initializer())
 
-            while grad > 0.01:
+            # Print the starting values
+            grad, loss = sess.run([gradients[0][0], getattr(self, "objectives").get(x_var)], feed_dict=data)
+            grad = norm(grad)
+            print(f"Iterations: {counter}   loss: {loss}   grad: {grad}")
 
-                # _, loss = sess.run([minimizer, getattr(self, "objectives").get(x_var)], feed_dict=data)
+            while grad > 0.01:
                 _, grad, loss = sess.run([minimizer, gradients[0][0], getattr(self, "objectives").get(x_var)],
                                          feed_dict=data)
                 grad = norm(grad)
-
-                # TODO: figure out how to make this thing give us the gradients that it's already computing!!!
-
                 counter += 1
+
                 if 0 == counter % print_freq:
                     print(f"Iterations: {counter}   loss: {loss}   grad: {grad}")
+            # Print the final values
             print(f"Iterations: {counter}   loss: {loss}   grad: {grad}")
 
             # When done training, get the prediction
@@ -122,21 +123,21 @@ class SplineModel:
         setattr(self, "placeholders", phs)
 
     def _make_coefficients(self):
-        coeff = {}
+        coefficients = {}
 
-        for var in getattr(self, "x_vars"):
+        for x_var in getattr(self, "x_vars"):
             if 1 == getattr(self, "dimension"):
-                coeff[var] = tf.Variable(initial_value=tf.random_normal([getattr(self, "spline_total") + 1],
-                                                                        mean=0.0, stddev=0.001),
-                                         dtype=tf.float32,
-                                         name=f"{var}_coefficients")
+                coefficients[x_var] = tf.Variable(initial_value=tf.random_normal([getattr(self, "spline_total") + 1],
+                                                                                 mean=0.0, stddev=0.001),
+                                                  dtype=tf.float32,
+                                                  name=f"{x_var}_coefficients")
             else:
-                coeff[var] = tf.Variable(initial_value=tf.random_normal([getattr(self, "spline_total") + 1],
-                                                                        mean=0.0, stddev=0.001),
-                                         dtype=tf.float32,
-                                         name=f"{var}_coefficients")
+                coefficients[x_var] = tf.Variable(initial_value=tf.random_normal([getattr(self, "spline_total") + 1],
+                                                                                 mean=0.0, stddev=0.001),
+                                                  dtype=tf.float32,
+                                                  name=f"{x_var}_coefficients")
 
-        setattr(self, "coefficients", coeff)
+        setattr(self, "coefficients", coefficients)
 
     def _make_model(self):
         models = {}
@@ -221,7 +222,7 @@ class SplineModel:
         optimizers = {}
         for var in getattr(self, 'x_vars'):
             learning_rate = tf.train.exponential_decay(learning_rate=20., global_step=self.global_step,
-                                                       decay_steps=250, decay_rate=0.90, staircase=True,
+                                                       decay_steps=100, decay_rate=0.90, staircase=True,
                                                        name=f"{var}_learning_rate")
             optimizer = tf.train.AdadeltaOptimizer(learning_rate=learning_rate, name=f"{var}_optimizer")
             optimizers[var] = optimizer
@@ -231,64 +232,3 @@ class SplineModel:
     def add_indicator(self, **kwargs):
         pass
 
-    def validate_and_save_inputs(self, covariates, spline_count, x_vars, y_var):
-        # Check the covariate list for valid data, and save it accordingly.
-        if isinstance(covariates, dict) and 1 <= len(covariates.keys()) <= 2:
-            for i, key in enumerate(covariates.keys()):
-                if not isinstance(key, str):
-                    raise TypeError(f"Covariate names must be strings. Covariate {i} was not.")
-
-            setattr(self, "covariates", covariates)
-            setattr(self, "data_shape", [len(covariates[key]) for key in covariates.keys()])
-            if 1 == len(covariates.keys()):
-                setattr(self, "dimension", 1)
-            else:
-                setattr(self, "dimension", 2)
-
-        elif isinstance(covariates, dict):
-            raise AttributeError(f"This package only supports 1-or-2-dimensional models. "
-                                 f"You supplied {len(covariates.keys())} covariates.")
-        else:
-            raise TypeError("Covariates must be supplied as a dictionary with covariate names "
-                            "as strings for keys, and covariate values for values.")
-
-        # Validate the spline count supplied, and make sure its dimensions coincide with the covariate dimensions.
-        if isinstance(spline_count, tuple) and len(spline_count) != 2:
-            raise AttributeError(f"This package only supports 1-or-2-dimensional data. "
-                                 f"You supplied {len(spline_count)} dimensions for the spline counts.")
-        elif isinstance(spline_count, tuple) and len(spline_count) != len(covariates):
-            raise AttributeError(f"{len(covariates)} were supplied, but only {len(spline_count)} spline counts. "
-                                 f"Must have one spline count per dimension.")
-        elif isinstance(spline_count, tuple) and len(spline_count) == len(covariates):
-            for i, c in enumerate(spline_count):
-                if not isinstance(c, int):
-                    raise TypeError(f"Counts must be integers, but count {i} was not.")
-
-            setattr(self, "spline_counts", list(spline_count))
-            setattr(self, "spline_total", spline_count[0] * spline_count[1])
-        elif isinstance(spline_count, int) and 1 == len(covariates):
-            setattr(self, "spline_counts", [spline_count])
-            setattr(self, "spline_total", spline_count)
-        elif isinstance(spline_count, int) and 2 == len(covariates):
-            setattr(self, "spline_counts", [spline_count, spline_count])
-            setattr(self, "spline_total", spline_count ** 2)
-        else:
-            raise AttributeError("Spline count must either be a single positive integer, "
-                                 "or a tuple containing two positive integers.")
-
-        # Validate the names of the x-vars.
-        if isinstance(x_vars, list):
-            for i, x in enumerate(x_vars):
-                if not isinstance(x, str):
-                    raise TypeError(f"X variables must be strings: {i} was not.")
-
-            setattr(self, "x_vars", x_vars)
-        elif isinstance(x_vars, str):
-            setattr(self, "x_vars", [x_vars])
-        else:
-            raise AttributeError("X variable names must be passed as a list of strings, or a single string")
-
-        if isinstance(y_var, str) or y_var is None:
-            setattr(self, "y_var", y_var)
-        else:
-            raise AttributeError("Y variable name must be strings")
