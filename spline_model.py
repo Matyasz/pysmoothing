@@ -37,58 +37,70 @@ class SplineModel:
         self._make_objective_functions()
         self._make_optimizers()
 
-    def fit_one(self, x_var: str, raw_data, print_freq: int=500):
+    def fit_one(self, var: str, raw_data, tolerance: float=0.01, print_freq: int=500):
         """
             Used to fit one X variable and return the data.
 
-            :param x_var:
+            :param var:
             :param raw_data:
+            :param tolerance:
             :param print_freq:
             :return:
         """
-        data = {getattr(self, "placeholders").get(x_var): raw_data}
-        gradients = getattr(self, "optimizers").get(x_var).compute_gradients(getattr(self, "objectives").get(x_var),
-                                                                             getattr(self, "coefficients").get(x_var))
-        minimizer = getattr(self, "optimizers").get(x_var).apply_gradients(gradients, global_step=self.global_step)
+        data, mean, stdev = mhf.normalize(raw_data)
+        prediction = self._fit(var, data, tolerance, print_freq)
+
+        prediction = mhf.undo_normalize(prediction[0], mean, stdev)
+        return prediction
+
+    def fit_multi(self, fit_vars: list, raw_data, tolerance: float=0.01, print_freq: int=500):
+        """
+            Used to fit all variables, and save a dictionary to the object which stores the fitted values.
+        """
+        predictions = {}
+
+        for var in fit_vars:
+            prediction = self._fit(var, raw_data, tolerance, print_freq)
+            predictions[var] = prediction
+
+        return predictions
+
+    def _fit(self, var, data, tol, pr_freq):
+        """
+            Holds the logic for fitting a model to a variable.
+        """
+        data = {getattr(self, "placeholders").get(var): data}
+        gradients = getattr(self, "optimizers").get(var).compute_gradients(getattr(self, "objectives").get(var),
+                                                                           getattr(self, "coefficients").get(var))
+        minimizer = getattr(self, "optimizers").get(var).apply_gradients(gradients, global_step=self.global_step)
         counter = 0
 
+        print(f"Fitting {var}")
         with tf.Session() as sess:
             sess.run(tf.global_variables_initializer())
 
             # Print the starting values
-            grad, loss = sess.run([gradients[0][0], getattr(self, "objectives").get(x_var)], feed_dict=data)
+            grad, loss = sess.run([gradients[0][0], getattr(self, "objectives").get(var)], feed_dict=data)
             grad = norm(grad)
             print(f"Iterations: {counter}   loss: {loss}   grad: {grad}")
 
-            while grad > 0.01:
-                _, grad, loss = sess.run([minimizer, gradients[0][0], getattr(self, "objectives").get(x_var)],
+            while grad > tol:
+                _, grad, loss = sess.run([minimizer, gradients[0][0], getattr(self, "objectives").get(var)],
                                          feed_dict=data)
                 grad = norm(grad)
                 counter += 1
 
-                if 0 == counter % print_freq:
+                if 0 == counter % pr_freq:
                     print(f"Iterations: {counter}   loss: {loss}   grad: {grad}")
             # Print the final values
             print(f"Iterations: {counter}   loss: {loss}   grad: {grad}")
 
             # When done training, get the prediction
-            prediction = sess.run([tf.gather(getattr(self, "models").get(x_var),
+            prediction = sess.run([tf.gather(getattr(self, "models").get(var),
                                              mhf.match_indices(larger=self.resolution,
                                                                smaller=getattr(self, "data_shape")[0]))])
 
         return prediction
-
-    def fit_multi(self):
-        """
-            Used to fit all variables, and save a dictionary to the object which stores the fitted values.
-        """
-        pass
-
-    def _fit(self):
-        """
-            Holds the logic for fitting a model to a variable.
-        """
-        pass
 
     def predict(self, vars=None):
         data = {}

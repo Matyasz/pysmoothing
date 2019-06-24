@@ -17,7 +17,14 @@ def match_indices(larger, smaller):
 
 
 def normalize(v):
-    return (v - np.nanmean(v)) / np.nanstd(v)
+    mu = np.nanmean(v)
+    sigma = np.nanstd(v)
+
+    return (v - np.nanmean(v)) / np.nanstd(v), mu, sigma
+
+
+def undo_normalize(v, mu, sigma):
+    return mu + (sigma * v)
 
 
 def quadratic_finite_difference(v):
