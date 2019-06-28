@@ -48,20 +48,25 @@ class SplineModel:
             :return:
         """
         data, mean, stdev = mhf.normalize(raw_data)
+        data = {getattr(self, "placeholders").get(var): data}
+
         prediction = self._fit(var, data, tolerance, print_freq)
 
         prediction = mhf.undo_normalize(prediction[0], mean, stdev)
         return prediction
 
-    def fit_multi(self, fit_vars: list, raw_data, tolerance: float=0.01, print_freq: int=500):
+    def fit_multi(self, fit_vars: list, raw_data: dict, tolerance: float=0.01, print_freq: int=500):
         """
             Used to fit all variables, and save a dictionary to the object which stores the fitted values.
         """
         predictions = {}
 
+        # When fitting the Y Variable, add placeholders for all other variables to the feed dict
+        data = {getattr(self, "placeholders").get(var): raw_data.get(var)
+                for var in getattr(self, 'x_vars') + [getattr(self, 'y_var')]}
+
         for var in fit_vars:
-            prediction = self._fit(var, raw_data, tolerance, print_freq)
-            predictions[var] = prediction
+            predictions[var] = self._fit(var, data, tolerance, print_freq)
 
         return predictions
 
@@ -69,11 +74,12 @@ class SplineModel:
         """
             Holds the logic for fitting a model to a variable.
         """
-        data = {getattr(self, "placeholders").get(var): data}
-        gradients = getattr(self, "optimizers").get(var).compute_gradients(getattr(self, "objectives").get(var),
-                                                                           getattr(self, "coefficients").get(var))
+        gradients = getattr(self, "optimizers").get(var).compute_gradients(getattr(self, "objectives").get(var))
         minimizer = getattr(self, "optimizers").get(var).apply_gradients(gradients, global_step=self.global_step)
+
         counter = 0
+
+        # TODO: OK YA MESSED THIS UP, THE FIT IS COMING OUT (378, 2, 500) THAT'S JUST WRONG...
 
         print(f"Fitting {var}")
         with tf.Session() as sess:
@@ -96,22 +102,11 @@ class SplineModel:
             print(f"Iterations: {counter}   loss: {loss}   grad: {grad}")
 
             # When done training, get the prediction
-            prediction = sess.run([tf.gather(getattr(self, "models").get(var),
-                                             mhf.match_indices(larger=self.resolution,
-                                                               smaller=getattr(self, "data_shape")[0]))])
+            prediction = sess.run([tf.gather_nd(getattr(self, "models").get(var),
+                                                mhf.match_indices(larger=self.resolution,
+                                                                  smaller=getattr(self, "data_shape")))])
 
         return prediction
-
-    def predict(self, vars=None):
-        data = {}
-        if vars is not None:
-            for var in vars:
-                data[var] = getattr(self, "predictions").get(var)
-        else:
-            for var in getattr(self, "x_vars") + [getattr(self, "y_var")]:
-                data[var] = getattr(self, "predictions").get(var)
-
-        return data
 
     def _make_placeholders(self):
         """
@@ -167,7 +162,7 @@ class SplineModel:
             s1 = create_splines(getattr(self, "spline_counts")[0])
             s2 = create_splines(getattr(self, "spline_counts")[1])
 
-            model_splines = tensor_product(s1, s2)
+            model_splines = tf.transpose(tensor_product(s1, s2))
 
             sum_axis = 2
 
@@ -194,6 +189,8 @@ class SplineModel:
                 if 1 == getattr(self, "dimension"):
                     penalties[var] = mhf.quadratic_finite_difference(
                                 getattr(self, "coefficients").get(var)[1:])
+                else:
+                    penalties[var] = 0.
         else:
             for var in getattr(self, 'x_vars'):
                 setattr(self, f"{var}_penalty", tf.constant(0., dtype=tf.float32))
@@ -206,15 +203,22 @@ class SplineModel:
         # Define the objective functions for all X variable models.
         # Often, the splines will have far more input values than the actual data, so we need to make
         # sure that we grab the correct number of evenly spaced spline outputs for this calculation.
+        indices = mhf.match_indices(larger=self.resolution, smaller=getattr(self, "data_shape"))
+
         for var in getattr(self, 'x_vars'):
-            obj = tf.reduce_sum(tf.square(tf.subtract(
-                tf.gather(getattr(self, 'models').get(var),
-                          indices=mhf.match_indices(larger=self.resolution,
-                                                    smaller=getattr(self, "data_shape")[0])),
-                getattr(self, 'placeholders').get(var))),
+            model = tf.gather_nd(getattr(self, "models").get(var), indices=indices)
+
+            if 2 == getattr(self, "dimension"):
+                # The multidimensional gather function returns a rank 1 tensor,
+                # so we need to flatten the data to compare it to the  model
+                model = tf.reshape(model, [getattr(self, "data_shape")[0], getattr(self, "data_shape")[1]])
+
+            obj = tf.reduce_sum(tf.square(tf.subtract(model, getattr(self, 'placeholders').get(var))),
                                 name=f"{var}_objective")
 
             objectives[var] = obj + getattr(self, "penalties").get(var)
+
+            # TODO: OK YA MESSED THIS UP, THE FIT IS COMING OUT (378, 2, 500) THAT'S JUST WRONG...
 
         # If there is a Y variable, define its objective function.
         if isinstance(getattr(self, "y_var"), str):
@@ -222,7 +226,7 @@ class SplineModel:
                 obj = tf.reduce_sum(tf.square(tf.subtract(
                     tf.gather(getattr(self, 'models').get(y_var),
                               indices=mhf.match_indices(larger=self.resolution,
-                                                        smaller=getattr(self, "data_shape")[0])),
+                                                        smaller=getattr(self, "data_shape"))),
                     getattr(self, 'placeholders').get(y_var))),
                     name=f"{y_var}_objective")
 
@@ -232,9 +236,10 @@ class SplineModel:
 
     def _make_optimizers(self):
         optimizers = {}
+
         for var in getattr(self, 'x_vars'):
             learning_rate = tf.train.exponential_decay(learning_rate=20., global_step=self.global_step,
-                                                       decay_steps=100, decay_rate=0.90, staircase=True,
+                                                       decay_steps=100, decay_rate=0.9, staircase=True,
                                                        name=f"{var}_learning_rate")
             optimizer = tf.train.AdadeltaOptimizer(learning_rate=learning_rate, name=f"{var}_optimizer")
             optimizers[var] = optimizer

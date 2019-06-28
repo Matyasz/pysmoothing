@@ -83,4 +83,4 @@ def tensor_product(splines_a, splines_b):
     for a in splines_a[1:]:
         for b in splines_b[1:]:
             splines.append(np.outer(a, b))
-    return np.asarray(splines)
+    return np.asarray(splines, dtype=np.float32)

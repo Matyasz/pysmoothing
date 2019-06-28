@@ -12,8 +12,12 @@ def match_indices(larger, smaller):
         :param smaller: The size of the smaller tensor
         :return: The indices from the larger tensor that you should use to compare the two tensors
     """
-
-    return [x for x in np.linspace(start=0, stop=larger - 1, num=smaller, dtype=np.int32)]
+    # if 1 == 1:
+    if 1 == len(smaller):
+        return [[x] for x in np.linspace(start=0, stop=larger - 1, num=smaller[0], dtype=np.int32)]
+    else:
+        return [[x, y] for x in np.linspace(start=0, stop=larger - 1, num=smaller[0], dtype=np.int32)
+                for y in np.linspace(start=0, stop=larger - 1, num=smaller[1], dtype=np.int32)]
 
 
 def normalize(v):
