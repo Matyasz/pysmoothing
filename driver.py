@@ -11,7 +11,7 @@ ages = np.array([a for a in range(0, 90, 5)])
 # exp = [2 * np.log(y - min(years) + 1) + np.random.normal(0, 0.5) for y in years]
 
 covariates = {'year': years, 'age': ages}
-exp = np.array([[a*a + (y - 1996) + np.random.normal(0, 0.1) for a in ages] for y in years])
+exp = np.array([[a*a + (y - 1996) + np.random.normal(0, 1) for a in ages] for y in years])
 
 # print(exp)
 
@@ -28,6 +28,10 @@ data.to_csv('/Users/taylor/Documents/outputs/data.csv', index=False)
 # fig = plt.figure()
 # plt.scatter(years, exp)
 # plt.plot(years, np.array(fit).reshape((len(years),)))
+# plt.show()
+
+# fig = plt.figure()
+# plt.scatter(years, exp[:, 0])
 # plt.show()
 
 # data = pd.read_csv('/Users/taylor/Documents/outputs/data.csv')

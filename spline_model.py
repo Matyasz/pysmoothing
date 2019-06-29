@@ -7,7 +7,8 @@ import tensorflow as tf
 
 class SplineModel:
     def __init__(self, covariates, spline_count, x_vars, y_var: str=None,
-                 penalize: bool=True, resolution: int=500, seed: int=0):
+                 penalize: bool=True, resolution: int=500, seed: int=0,
+                 intra_op_parallelism_threads: int=0, inter_op_parallelism_threads: int=0):
         """
             Constructor only takes the basic info necessary to define the model,
             then methods will be available for the user to crete the model,
@@ -28,6 +29,9 @@ class SplineModel:
         self.penalize = penalize
         self.resolution = resolution
         self.global_step = tf.Variable(0, trainable=False, name="global_step")
+
+        self.intra_op_parallelism_threads = intra_op_parallelism_threads
+        self.inter_op_parallelism_threads = inter_op_parallelism_threads
 
     def make(self):
         self._make_placeholders()
@@ -79,10 +83,12 @@ class SplineModel:
 
         counter = 0
 
-        # TODO: OK YA MESSED THIS UP, THE FIT IS COMING OUT (378, 2, 500) THAT'S JUST WRONG...
+        config = tf.ConfigProto(intra_op_parallelism_threads=self.intra_op_parallelism_threads,
+                                inter_op_parallelism_threads=self.inter_op_parallelism_threads,
+                                allow_soft_placement=True)
 
         print(f"Fitting {var}")
-        with tf.Session() as sess:
+        with tf.Session(config=config) as sess:
             sess.run(tf.global_variables_initializer())
 
             # Print the starting values
@@ -112,22 +118,22 @@ class SplineModel:
         """
             Make the placeholder objects for the data that will be passed to the fit function by the user.
         """
-        phs = {}
+        placeholders = {}
 
         # Make the placeholders for the penalty values
         for var in getattr(self, 'x_vars'):
             for cov in getattr(self, 'covariates'):
                 ph_name = f"{var}_{cov}_penalty"
-                phs[ph_name] = tf.placeholder(dtype=tf.float32,
-                                              shape=[1], name=ph_name)
+                placeholders[ph_name] = tf.placeholder(dtype=tf.float32,
+                                                       shape=[1], name=ph_name)
 
         # Make the placeholders for the data to be fitted
         for var in getattr(self, 'x_vars') + [getattr(self, 'y_var')]:
             ph_name = f"{var}_placeholder"
-            phs[var] = tf.placeholder(dtype=tf.float32,
-                                      shape=getattr(self, "data_shape"), name=ph_name)
+            placeholders[var] = tf.placeholder(dtype=tf.float32,
+                                               shape=getattr(self, "data_shape"), name=ph_name)
 
-        setattr(self, "placeholders", phs)
+        setattr(self, "placeholders", placeholders)
 
     def _make_coefficients(self):
         coefficients = {}
@@ -204,21 +210,21 @@ class SplineModel:
         # Often, the splines will have far more input values than the actual data, so we need to make
         # sure that we grab the correct number of evenly spaced spline outputs for this calculation.
         indices = mhf.match_indices(larger=self.resolution, smaller=getattr(self, "data_shape"))
+        data_indices = mhf.match_indices(larger=getattr(self, "data_shape"), smaller=getattr(self, "data_shape"))
 
         for var in getattr(self, 'x_vars'):
             model = tf.gather_nd(getattr(self, "models").get(var), indices=indices)
+            data = tf.gather_nd(getattr(self, 'placeholders').get(var), indices=data_indices)
 
-            if 2 == getattr(self, "dimension"):
-                # The multidimensional gather function returns a rank 1 tensor,
-                # so we need to flatten the data to compare it to the  model
-                model = tf.reshape(model, [getattr(self, "data_shape")[0], getattr(self, "data_shape")[1]])
+            # if 2 == getattr(self, "dimension"):
+            #     # The multidimensional gather function returns a rank 1 tensor,
+            #     # so we need to flatten the data to compare it to the  model
+            #     model = tf.reshape(model, [getattr(self, "data_shape")[0], getattr(self, "data_shape")[1]])
 
-            obj = tf.reduce_sum(tf.square(tf.subtract(model, getattr(self, 'placeholders').get(var))),
+            obj = tf.reduce_sum(tf.square(tf.subtract(model, data)),
                                 name=f"{var}_objective")
 
             objectives[var] = obj + getattr(self, "penalties").get(var)
-
-            # TODO: OK YA MESSED THIS UP, THE FIT IS COMING OUT (378, 2, 500) THAT'S JUST WRONG...
 
         # If there is a Y variable, define its objective function.
         if isinstance(getattr(self, "y_var"), str):
